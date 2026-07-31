@@ -1257,5 +1257,95 @@
       }
     })();
     </script>
+    <script>
+      // Exchange the Clerk token over HTTPS for a short-lived, one-use
+      // WebSocket ticket. The actual session token never enters the WS URL.
+      (function () {
+        var NativeWebSocket = window.WebSocket;
+
+        function TicketedWebSocket(url, protocols) {
+          var wrapper = this;
+          var socket = null;
+          var closed = false;
+          var queued = [];
+
+          wrapper.readyState = NativeWebSocket.CONNECTING;
+          wrapper.url = String(url);
+          wrapper.protocol = '';
+          wrapper.extensions = '';
+          wrapper.bufferedAmount = 0;
+          wrapper.binaryType = 'blob';
+
+          wrapper.send = function (data) {
+            if (socket && socket.readyState === NativeWebSocket.OPEN) {
+              socket.send(data);
+            } else {
+              queued.push(data);
+            }
+          };
+
+          wrapper.close = function (code, reason) {
+            closed = true;
+            queued = [];
+            if (socket) socket.close(code, reason);
+          };
+
+          (async function () {
+            try {
+              var session = window.Clerk && window.Clerk.session;
+              if (!session) throw new Error('Sign in required');
+              var token = await session.getToken();
+              if (!token) throw new Error('Sign in required');
+
+              var response = await fetch('/api/ws-ticket', {
+                method: 'POST',
+                headers: { Authorization: 'Bearer ' + token }
+              });
+              if (!response.ok) throw new Error('Could not authenticate room connection');
+              var result = await response.json();
+              if (!result.ticket) throw new Error('Room ticket missing');
+              if (closed) return;
+
+              var separator = String(url).indexOf('?') === -1 ? '?' : '&';
+              var ticketUrl = url + separator + 'ticket=' + encodeURIComponent(result.ticket);
+              socket = protocols
+                ? new NativeWebSocket(ticketUrl, protocols)
+                : new NativeWebSocket(ticketUrl);
+              socket.binaryType = wrapper.binaryType;
+
+              socket.onopen = function (event) {
+                wrapper.readyState = NativeWebSocket.OPEN;
+                wrapper.protocol = socket.protocol;
+                wrapper.extensions = socket.extensions;
+                queued.splice(0).forEach(function (data) { socket.send(data); });
+                if (wrapper.onopen) wrapper.onopen(event);
+              };
+              socket.onmessage = function (event) {
+                if (wrapper.onmessage) wrapper.onmessage(event);
+              };
+              socket.onerror = function (event) {
+                if (wrapper.onerror) wrapper.onerror(event);
+              };
+              socket.onclose = function (event) {
+                wrapper.readyState = NativeWebSocket.CLOSED;
+                if (wrapper.onclose) wrapper.onclose(event);
+              };
+            } catch (error) {
+              wrapper.readyState = NativeWebSocket.CLOSED;
+              if (wrapper.onerror) wrapper.onerror({ error: error });
+              if (wrapper.onclose) {
+                wrapper.onclose({ code: 4401, reason: error.message, wasClean: false });
+              }
+            }
+          })();
+        }
+
+        TicketedWebSocket.CONNECTING = NativeWebSocket.CONNECTING;
+        TicketedWebSocket.OPEN = NativeWebSocket.OPEN;
+        TicketedWebSocket.CLOSING = NativeWebSocket.CLOSING;
+        TicketedWebSocket.CLOSED = NativeWebSocket.CLOSED;
+        window.WebSocket = TicketedWebSocket;
+      })();
+    </script>
   </body>
 </html>
