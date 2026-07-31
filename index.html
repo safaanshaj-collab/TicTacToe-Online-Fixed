@@ -1332,6 +1332,14 @@
               };
             } catch (error) {
               wrapper.readyState = NativeWebSocket.CLOSED;
+              if (wrapper.onmessage) {
+                wrapper.onmessage({
+                  data: JSON.stringify({
+                    type: 'error',
+                    message: error.message || 'Room connection failed'
+                  })
+                });
+              }
               if (wrapper.onerror) wrapper.onerror({ error: error });
               if (wrapper.onclose) {
                 wrapper.onclose({ code: 4401, reason: error.message, wasClean: false });
