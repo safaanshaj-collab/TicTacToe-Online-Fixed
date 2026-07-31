@@ -1165,7 +1165,7 @@
         var body = document.getElementById('ttt-lb-body');
         if (!body) return;
         body.innerHTML = '<p style="color:#444;text-align:center;padding:48px 24px;font-size:0.9rem;">Loading…</p>';
-        fetch('/api/users')
+        fetch('/api/leaderboard')
           .then(function (r) { return r.json(); })
           .then(function (users) { renderLeaderboard(users, body); })
           .catch(function () {
