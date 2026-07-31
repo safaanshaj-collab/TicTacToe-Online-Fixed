@@ -1,0 +1,1261 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+    <title>Tic Tac Toe</title>
+    <meta name="description" content="Made By Safaan">
+    <meta name="robots" content="index, follow">
+    <meta property="og:title" content="Tic Tac Toe">
+    <meta property="og:description" content="Made By Safaan">
+    <meta property="og:type" content="website">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Tic Tac Toe">
+    <meta name="twitter:description" content="Made By Safaan">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script type="module" crossorigin src="/assets/index-yGBv_3L0.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-jEJ8WlC1.css">
+    <style>
+      #guest-bar {
+        position: fixed; bottom: 0; left: 0; right: 0;
+        display: flex; justify-content: center; align-items: center;
+        padding: 14px 24px;
+        background: linear-gradient(to top, rgba(17,17,17,0.98) 60%, transparent);
+        z-index: 9999; pointer-events: none;
+      }
+      #guest-bar a {
+        pointer-events: all; font-family: Inter, sans-serif; font-size: 0.85rem;
+        font-weight: 500; color: #555; text-decoration: none; padding: 8px 20px;
+        border-radius: 99px; border: 1px solid #2a2a2a;
+        transition: color 0.15s, border-color 0.15s; background: #111;
+      }
+      #guest-bar a:hover { color: #aaa; border-color: #444; }
+      #credit-bar {
+        position: fixed; top: 12px; right: 16px; font-family: Inter, sans-serif;
+        font-size: 0.72rem; font-weight: 500; color: #333; letter-spacing: 0.04em;
+        pointer-events: none; z-index: 9999;
+      }
+      #donate-badge {
+        position: fixed; top: 12px; right: 140px; font-family: Inter, sans-serif;
+        font-size: 0.78rem; font-weight: 600; color: #ffb020; letter-spacing: 0.02em;
+        pointer-events: all; z-index: 9999; background: rgba(255,176,32,0.1);
+        border: 1px solid rgba(255,176,32,0.35); border-radius: 99px;
+        padding: 6px 14px; cursor: pointer; display: flex; align-items: center; gap: 5px;
+        transition: background 0.15s, border-color 0.15s;
+      }
+      #donate-badge:hover { background: rgba(255,176,32,0.2); border-color: rgba(255,176,32,0.6); }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+
+    <!-- WebSocket wrapper: captures opponent profiles for the extra player cards -->
+    <script>
+    window.__tttEsc = function (value) {
+      return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    };
+    window.__tttSafeImageUrl = function (value) {
+      if (!value) return '';
+      try {
+        var parsed = new URL(String(value), location.origin);
+        return parsed.protocol === 'https:' ? window.__tttEsc(parsed.href) : '';
+      } catch (e) {
+        return '';
+      }
+    };
+    (function () {
+      var OrigWS = window.WebSocket;
+      window.__tttGameProfiles = null;
+
+      function PatchedWS(url, protocols) {
+        var ws = protocols ? new OrigWS(url, protocols) : new OrigWS(url);
+
+        // Intercept onmessage to capture game profiles + fire pending challenge
+        var _onmessage = null;
+        Object.defineProperty(ws, 'onmessage', {
+          configurable: true,
+          get: function () { return _onmessage; },
+          set: function (fn) {
+            _onmessage = function (event) {
+              try {
+                var d = JSON.parse(event.data);
+                if (d.type === 'start' && (d.xProfile || d.oProfile)) {
+                  window.__tttGameProfiles = { x: d.xProfile, o: d.oProfile };
+                }
+                // Auto-send challenge when a room is created
+                if (d.type === 'created' && d.code && window.__tttPendingChallenge) {
+                  var ch = window.__tttPendingChallenge;
+                  window.__tttPendingChallenge = null;
+                  var me = window.__tttMyProfile || {};
+                  fetch('/api/challenges/send', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                      fromId: me.id || '',
+                      toId: ch.toId,
+                      roomCode: d.code,
+                      fromName: me.displayName || me.username || '',
+                      fromPic: me.profilePicture || '',
+                    })
+                  }).catch(function () {});
+                  showChallengeConfirmToast(ch.toName, d.code);
+                }
+              } catch (e) {}
+              if (fn) fn(event);
+            };
+          }
+        });
+        return ws;
+      }
+
+      PatchedWS.prototype = OrigWS.prototype;
+      PatchedWS.CONNECTING = OrigWS.CONNECTING;
+      PatchedWS.OPEN = OrigWS.OPEN;
+      PatchedWS.CLOSING = OrigWS.CLOSING;
+      PatchedWS.CLOSED = OrigWS.CLOSED;
+      window.WebSocket = PatchedWS;
+    })();
+    </script>
+
+    <!-- Guest bar -->
+    <div id="guest-bar"><a href="/guest.html">Play as Guest</a></div>
+    <div id="credit-bar">Made by Safaan</div>
+    <div id="donate-badge">₹ Donate</div>
+    <script>
+      (function () {
+        var badge = document.getElementById('donate-badge');
+        if (!badge) return;
+        var UPI_VPA = 'safaan@oksbi';
+        var UPI_NAME = 'Safaan';
+
+        function isMobile() {
+          return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+        }
+
+        fetch('/api/donate/tap')
+          .then(function (r) { return r.json(); })
+          .then(function (data) {
+            if (data && typeof data.count === 'number') {
+              window.__tttSupporterCount = data.count;
+              var countEl = document.getElementById('ttt-supporter-count');
+              if (countEl) countEl.textContent = data.count;
+            }
+          })
+          .catch(function () {});
+
+        badge.addEventListener('click', function () {
+          var existing = document.getElementById('donate-toast');
+          if (existing) { existing.remove(); }
+
+          fetch('/api/donate/tap', { method: 'POST' })
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+              var countEl = document.getElementById('ttt-supporter-count');
+              if (countEl && data && typeof data.count === 'number') {
+                countEl.textContent = data.count;
+              }
+            })
+            .catch(function () {});
+
+          if (isMobile()) {
+            var upiUrl = 'upi://pay?pa=' + encodeURIComponent(UPI_VPA) +
+              '&pn=' + encodeURIComponent(UPI_NAME) + '&cu=INR';
+            window.location.href = upiUrl;
+          }
+
+          var toast = document.createElement('div');
+          toast.id = 'donate-toast';
+          toast.style.cssText = 'position:fixed;top:56px;right:16px;z-index:99999;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;padding:14px 16px;max-width:280px;font-family:Inter,sans-serif;box-shadow:0 4px 20px rgba(0,0,0,0.5);';
+          toast.innerHTML =
+            '<div style="color:#ffb020;font-size:0.8rem;font-weight:700;margin-bottom:6px;">₹ Support via UPI (India only)</div>' +
+            '<div style="color:#ccc;font-size:0.78rem;line-height:1.4;margin-bottom:8px;">Pay to: <span id="ttt-upi-id" style="font-family:monospace;color:#fff;">' + UPI_VPA + '</span></div>' +
+            '<button id="ttt-upi-copy" style="width:100%;font-size:0.75rem;background:#ffb020;color:#000;border:none;border-radius:8px;padding:6px 0;cursor:pointer;font-weight:700;font-family:inherit;margin-bottom:6px;">Copy UPI ID</button>' +
+            '<div style="color:#666;font-size:0.68rem;line-height:1.35;margin-bottom:6px;">' + (isMobile() ? 'Opening your UPI app…' : 'Open a UPI app (Google Pay, PhonePe, Paytm) on your phone to pay.') + ' USD support coming later.</div>' +
+            '<div style="color:#888;font-size:0.68rem;border-top:1px solid #2a2a2a;padding-top:6px;">💛 <span id="ttt-supporter-count">' + (window.__tttSupporterCount != null ? window.__tttSupporterCount : '…') + '</span> people have tapped to support so far</div>';
+          document.body.appendChild(toast);
+
+          var copyBtn = document.getElementById('ttt-upi-copy');
+          if (copyBtn) {
+            copyBtn.addEventListener('click', function () {
+              navigator.clipboard.writeText(UPI_VPA).then(function () {
+                copyBtn.textContent = 'Copied ✓';
+                setTimeout(function () { copyBtn.textContent = 'Copy UPI ID'; }, 1500);
+              }).catch(function () {});
+            });
+          }
+          setTimeout(function () { if (toast.parentNode) toast.remove(); }, 12000);
+        });
+      })();
+    </script>
+
+    <!-- Profile setup modal + friend request polling -->
+    <script>
+    (function () {
+      var profileChecked = false;
+      var currentUserId = null;
+
+      function checkUserProfile() {
+        if (profileChecked) return;
+        var user = window.Clerk && window.Clerk.user;
+        if (!user) return;
+        profileChecked = true;
+        currentUserId = user.id;
+        fetch('/api/user/status?userId=' + encodeURIComponent(user.id))
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            if (!d.hasProfile) {
+              showProfileModal(user.id, user.imageUrl || '');
+            } else {
+              window.__tttMyProfile = {
+                id: user.id,
+                displayName: d.displayName,
+                username: d.username,
+                profilePicture: d.profilePicture || user.imageUrl || '',
+              };
+              initFriendsBadgePolling(user.id);
+            }
+          }).catch(function () {});
+      }
+
+      setInterval(function () {
+        if (!profileChecked && window.Clerk && window.Clerk.user) checkUserProfile();
+      }, 600);
+
+      // ─── Profile Setup Modal ───────────────────────────────────────────────
+      function showProfileModal(userId, profilePicture) {
+        if (document.getElementById('ttt-profile-modal')) return;
+        var overlay = document.createElement('div');
+        overlay.id = 'ttt-profile-modal';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.88);display:flex;align-items:center;justify-content:center;z-index:999999;font-family:Inter,system-ui,sans-serif;padding:24px;';
+        overlay.innerHTML = [
+          '<div style="background:#1a1a1a;border:1px solid #2a2a2a;border-radius:18px;padding:36px 32px;width:100%;max-width:380px;display:flex;flex-direction:column;gap:18px;">',
+            profilePicture ? '<img src="'+window.__tttSafeImageUrl(profilePicture)+'" style="width:64px;height:64px;border-radius:50%;object-fit:cover;margin:0 auto;display:block;border:2px solid #333;">' : '',
+            '<div style="text-align:center;">',
+              '<h2 style="color:#22d3ee;font-size:1.35rem;font-weight:700;margin:0 0 4px;letter-spacing:0.04em;">Set Up Your Profile</h2>',
+              '<p style="color:#555;font-size:0.8rem;margin:0;">Step <span id="ttt-pm-step">1</span> of 2</p>',
+            '</div>',
+            '<div id="ttt-pm-u">',
+              '<label style="color:#aaa;font-size:0.82rem;font-weight:500;display:block;margin-bottom:8px;">Username <span style="color:#444;font-weight:400;">(unique · 3–20 chars)</span></label>',
+              '<input id="ttt-pm-ui" type="text" maxlength="20" placeholder="e.g. safaan99" autocomplete="off" style="width:100%;box-sizing:border-box;background:#111;border:2px solid #333;border-radius:10px;color:#fff;font-size:1rem;padding:13px 14px;outline:none;font-family:inherit;">',
+              '<p id="ttt-pm-um" style="font-size:0.8rem;margin:8px 0 0;min-height:1.1em;"></p>',
+              '<button id="ttt-pm-ub" disabled style="width:100%;background:#22d3ee;color:#000;border:none;border-radius:10px;padding:14px;font-size:1rem;font-weight:600;cursor:pointer;margin-top:6px;font-family:inherit;opacity:0.4;">Next →</button>',
+            '</div>',
+            '<div id="ttt-pm-d" style="display:none;">',
+              '<label style="color:#aaa;font-size:0.82rem;font-weight:500;display:block;margin-bottom:8px;">Display Name <span style="color:#444;font-weight:400;">(shown in-game)</span></label>',
+              '<input id="ttt-pm-di" type="text" maxlength="30" placeholder="e.g. Safaan 🎮" autocomplete="off" style="width:100%;box-sizing:border-box;background:#111;border:2px solid #333;border-radius:10px;color:#fff;font-size:1rem;padding:13px 14px;outline:none;font-family:inherit;">',
+              '<p style="color:#444;font-size:0.78rem;margin:8px 0 0;">Others can share the same display name — it\'s just for show.</p>',
+              '<button id="ttt-pm-db" disabled style="width:100%;background:#22d3ee;color:#000;border:none;border-radius:10px;padding:14px;font-size:1rem;font-weight:600;cursor:pointer;margin-top:14px;font-family:inherit;opacity:0.4;">Save Profile</button>',
+            '</div>',
+          '</div>'
+        ].join('');
+        document.body.appendChild(overlay);
+
+        var chosenUsername = '', usernameValid = false, checkTimer = null;
+        var uInput = document.getElementById('ttt-pm-ui');
+        var uMsg   = document.getElementById('ttt-pm-um');
+        var uBtn   = document.getElementById('ttt-pm-ub');
+        var dInput = document.getElementById('ttt-pm-di');
+        var dBtn   = document.getElementById('ttt-pm-db');
+        var stepEl = document.getElementById('ttt-pm-step');
+        var uStep  = document.getElementById('ttt-pm-u');
+        var dStep  = document.getElementById('ttt-pm-d');
+
+        uInput.focus();
+
+        uInput.addEventListener('input', function () {
+          var val = uInput.value.trim();
+          usernameValid = false; uBtn.disabled = true; uBtn.style.opacity = '0.4';
+          clearTimeout(checkTimer);
+          if (!val) { uMsg.textContent = ''; return; }
+          if (!/^[a-zA-Z0-9_]{3,20}$/.test(val)) {
+            uMsg.style.color = '#f87171';
+            uMsg.textContent = 'Letters, numbers, underscores only (3–20 chars)'; return;
+          }
+          uMsg.style.color = '#888'; uMsg.textContent = 'Checking…';
+          checkTimer = setTimeout(function () {
+            fetch('/api/user/check-username?username=' + encodeURIComponent(val))
+              .then(function (r) { return r.json(); })
+              .then(function (d) {
+                if (uInput.value.trim() !== val) return;
+                if (d.available) {
+                  uMsg.style.color = '#34d399'; uMsg.textContent = '✓ Available';
+                  usernameValid = true; uBtn.disabled = false; uBtn.style.opacity = '1';
+                } else {
+                  uMsg.style.color = '#f87171'; uMsg.textContent = 'Username has been taken';
+                }
+              }).catch(function () {});
+          }, 500);
+        });
+
+        uBtn.addEventListener('click', function () {
+          if (!usernameValid) return;
+          chosenUsername = uInput.value.trim();
+          uStep.style.display = 'none'; dStep.style.display = 'block';
+          stepEl.textContent = '2'; dInput.focus();
+        });
+
+        dInput.addEventListener('input', function () {
+          var v = dInput.value.trim();
+          dBtn.disabled = !v; dBtn.style.opacity = v ? '1' : '0.4';
+        });
+
+        dBtn.addEventListener('click', function () {
+          var displayName = dInput.value.trim();
+          if (!displayName || !chosenUsername) return;
+          dBtn.disabled = true; dBtn.textContent = 'Saving…';
+          fetch('/api/user/register', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({userId: userId, username: chosenUsername, displayName: displayName, profilePicture: profilePicture})
+          }).then(function (r) { return r.json(); })
+            .then(function (d) {
+              if (d.ok) {
+                overlay.remove();
+                window.__tttMyProfile = {
+                  id: userId,
+                  displayName: displayName,
+                  username: chosenUsername,
+                  profilePicture: profilePicture,
+                };
+                initFriendsBadgePolling(userId);
+              } else if (d.error === 'Username has been taken') {
+                dStep.style.display = 'none'; uStep.style.display = 'block';
+                stepEl.textContent = '1';
+                uMsg.style.color = '#f87171'; uMsg.textContent = 'Username has been taken — choose another';
+                usernameValid = false; uBtn.disabled = true; uBtn.style.opacity = '0.4';
+                dBtn.disabled = false; dBtn.textContent = 'Save Profile';
+              } else {
+                dBtn.disabled = false; dBtn.textContent = 'Save Profile';
+                uMsg.style.color = '#f87171'; uMsg.textContent = d.error || 'Something went wrong';
+              }
+            }).catch(function () { dBtn.disabled = false; dBtn.textContent = 'Save Profile'; });
+        });
+      }
+
+      // ─── Toast notification ────────────────────────────────────────────────
+      function showFriendToast(user) {
+        var existing = document.getElementById('ttt-friend-toast');
+        if (existing) existing.remove();
+
+        var toast = document.createElement('div');
+        toast.id = 'ttt-friend-toast';
+        toast.style.cssText = [
+          'position:fixed', 'bottom:80px', 'left:16px', 'z-index:99999',
+          'background:#1e1e1e', 'border:1px solid #34d399', 'border-radius:14px',
+          'padding:12px 14px', 'display:flex', 'align-items:center', 'gap:10px',
+          'font-family:Inter,system-ui,sans-serif', 'box-shadow:0 6px 24px rgba(0,0,0,0.5)',
+          'max-width:260px', 'cursor:pointer',
+          'animation:tttSlideIn 0.3s ease',
+        ].join(';');
+
+        var picHtml = user.profilePicture
+          ? '<img src="' + window.__tttSafeImageUrl(user.profilePicture) + '" style="width:36px;height:36px;border-radius:50%;object-fit:cover;flex-shrink:0;">'
+          : '<div style="width:36px;height:36px;border-radius:50%;background:#34d39922;color:#34d399;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;flex-shrink:0;">' + (user.displayName || '?').charAt(0).toUpperCase() + '</div>';
+
+        toast.innerHTML = picHtml +
+          '<div style="min-width:0;">' +
+            '<div style="color:#34d399;font-size:0.78rem;font-weight:700;margin-bottom:2px;">Friend Request</div>' +
+            '<div style="color:#ccc;font-size:0.82rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escHtmlGlobal(user.displayName || user.username) + '</div>' +
+            '<div style="color:#555;font-size:0.72rem;margin-top:1px;">Tap to respond</div>' +
+          '</div>' +
+          '<button id="ttt-toast-close" style="background:none;border:none;color:#444;font-size:16px;cursor:pointer;padding:2px;flex-shrink:0;align-self:flex-start;">✕</button>';
+
+        if (!document.getElementById('ttt-toast-style')) {
+          var s = document.createElement('style');
+          s.id = 'ttt-toast-style';
+          s.textContent = '@keyframes tttSlideIn{from{transform:translateX(-110%);opacity:0}to{transform:translateX(0);opacity:1}}';
+          document.head.appendChild(s);
+        }
+
+        document.body.appendChild(toast);
+
+        toast.addEventListener('click', function (e) {
+          if (e.target.id === 'ttt-toast-close') { toast.remove(); return; }
+          // Open friends panel to Friends tab
+          var btn = document.getElementById('ttt-friends-btn');
+          var panel = document.getElementById('ttt-friends-panel');
+          if (btn && panel) {
+            panel.style.transform = 'translateX(0)';
+            document.getElementById('ttt-fp-tab-friends') && document.getElementById('ttt-fp-tab-friends').click();
+          }
+          toast.remove();
+        });
+
+        // Auto-dismiss after 6 seconds
+        setTimeout(function () { if (toast.parentNode) toast.remove(); }, 6000);
+      }
+
+      function escHtmlGlobal(s) {
+        return window.__tttEsc(s);
+      }
+
+      function makeToastBase(offsetIdx) {
+        var offset = 16 + offsetIdx * 90;
+        var toast = document.createElement('div');
+        toast.style.cssText = 'position:fixed;bottom:' + offset + 'px;left:16px;z-index:99999;display:flex;align-items:center;gap:10px;padding:12px 14px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:14px;box-shadow:0 4px 24px rgba(0,0,0,0.6);max-width:300px;min-width:220px;cursor:pointer;animation:tttSlideIn 0.35s cubic-bezier(0.16,1,0.3,1) both;';
+        if (!document.getElementById('ttt-toast-style')) {
+          var s = document.createElement('style'); s.id = 'ttt-toast-style';
+          s.textContent = '@keyframes tttSlideIn{from{transform:translateX(-110%);opacity:0}to{transform:translateX(0);opacity:1}}';
+          document.head.appendChild(s);
+        }
+        return toast;
+      }
+
+      // "Challenge sent! Now create a room" — shown to the challenger right after clicking ⚔️
+      function showChallengePendingToast(toName) {
+        var toast = makeToastBase(0);
+        toast.innerHTML =
+          '<div style="font-size:1.4rem;flex-shrink:0;">⚔️</div>' +
+          '<div style="min-width:0;">' +
+            '<div style="color:#a78bfa;font-size:0.78rem;font-weight:700;margin-bottom:2px;">Challenge set!</div>' +
+            '<div style="color:#ccc;font-size:0.82rem;font-weight:600;line-height:1.3;">' + escHtmlGlobal(toName) + ' will be notified</div>' +
+            '<div style="color:#666;font-size:0.72rem;margin-top:2px;">Go to Online Multiplayer → Create Room</div>' +
+          '</div>' +
+          '<button id="ttt-chal-close" style="background:none;border:none;color:#444;font-size:16px;cursor:pointer;padding:2px;flex-shrink:0;align-self:flex-start;">✕</button>';
+        document.body.appendChild(toast);
+        toast.addEventListener('click', function (e) { toast.remove(); });
+        setTimeout(function () { if (toast.parentNode) toast.remove(); }, 9000);
+      }
+
+      // "Room XXXX created — [Friend] will get the invite" — shown after WS intercepts 'created'
+      function showChallengeConfirmToast(toName, code) {
+        var toast = makeToastBase(0);
+        toast.innerHTML =
+          '<div style="font-size:1.4rem;flex-shrink:0;">⚔️</div>' +
+          '<div style="min-width:0;">' +
+            '<div style="color:#a78bfa;font-size:0.78rem;font-weight:700;margin-bottom:2px;">Challenge sent!</div>' +
+            '<div style="color:#ccc;font-size:0.82rem;font-weight:600;line-height:1.3;">Room <span style="color:#f0f;font-family:monospace;">' + escHtmlGlobal(code) + '</span> sent to ' + escHtmlGlobal(toName) + '</div>' +
+            '<div style="color:#666;font-size:0.72rem;margin-top:2px;">Waiting for them to join…</div>' +
+          '</div>' +
+          '<button id="ttt-chal-close" style="background:none;border:none;color:#444;font-size:16px;cursor:pointer;padding:2px;flex-shrink:0;align-self:flex-start;">✕</button>';
+        document.body.appendChild(toast);
+        toast.addEventListener('click', function (e) { toast.remove(); });
+        setTimeout(function () { if (toast.parentNode) toast.remove(); }, 10000);
+      }
+
+      // Incoming challenge toast for user B — "Accept" auto-joins the room
+      function showChallengeIncomingToast(ch) {
+        var toast = makeToastBase(0);
+        var picHtml = ch.fromPic
+          ? '<img src="' + window.__tttSafeImageUrl(ch.fromPic) + '" style="width:36px;height:36px;border-radius:50%;object-fit:cover;flex-shrink:0;">'
+          : '<div style="width:36px;height:36px;border-radius:50%;background:#a78bfa22;color:#a78bfa;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;flex-shrink:0;">' + escHtmlGlobal((ch.fromName || '?').charAt(0).toUpperCase()) + '</div>';
+        toast.innerHTML =
+          picHtml +
+          '<div style="flex:1;min-width:0;">' +
+            '<div style="color:#a78bfa;font-size:0.78rem;font-weight:700;margin-bottom:2px;">⚔️ Challenge!</div>' +
+            '<div style="color:#ccc;font-size:0.82rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escHtmlGlobal(ch.fromName || 'Someone') + '</div>' +
+            '<button data-chal-accept="' + ch.id + '" data-chal-code="' + escHtmlGlobal(ch.roomCode) + '" style="margin-top:5px;font-size:0.75rem;background:#a78bfa;color:#000;border:none;border-radius:8px;padding:4px 12px;cursor:pointer;font-weight:700;font-family:inherit;">Accept →</button>' +
+          '</div>' +
+          '<button id="ttt-chal-close" style="background:none;border:none;color:#444;font-size:16px;cursor:pointer;padding:2px;flex-shrink:0;align-self:flex-start;">✕</button>';
+        document.body.appendChild(toast);
+        toast.addEventListener('click', function (e) {
+          if (e.target.id === 'ttt-chal-close') { toast.remove(); return; }
+          var acceptBtn = e.target.closest('[data-chal-accept]');
+          if (acceptBtn) {
+            var cid   = acceptBtn.getAttribute('data-chal-accept');
+            var code  = acceptBtn.getAttribute('data-chal-code');
+            fetch('/api/challenges/dismiss', {
+              method: 'POST', headers: {'Content-Type':'application/json'},
+              body: JSON.stringify({challengeId: parseInt(cid, 10)})
+            }).catch(function () {});
+            localStorage.setItem('ttt_join', code);
+            toast.remove();
+            // Trigger auto-join via storage event or direct call
+            if (typeof window.__tttTriggerJoin === 'function') {
+              window.__tttTriggerJoin(code);
+            } else {
+              // Navigate to root to let auto-join fire on load
+              location.href = '/?join=' + encodeURIComponent(code);
+            }
+          }
+        });
+        setTimeout(function () { if (toast.parentNode) toast.remove(); }, 20000);
+      }
+
+      // ─── Friends badge polling ──────────────────────────────────────────────
+      function initFriendsBadgePolling(userId) {
+        currentUserId = userId;
+        buildProfileButton(userId);
+        buildFriendsPanel(userId);
+        var knownIncomingIds = null;
+
+        function poll() {
+          fetch('/api/friends?userId=' + encodeURIComponent(userId))
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+              var incoming = d.incoming || [];
+              updateFriendsBadge(incoming.length);
+
+              // Detect newly arrived requests and show toast
+              if (knownIncomingIds !== null) {
+                incoming.forEach(function (u) {
+                  if (knownIncomingIds.indexOf(u.id) === -1) {
+                    showFriendToast(u);
+                  }
+                });
+              }
+              knownIncomingIds = incoming.map(function (u) { return u.id; });
+            })
+            .catch(function () {});
+        }
+        poll();
+        setInterval(poll, 15000);
+
+        // ─── Challenge polling ────────────────────────────────────────────────
+        var seenChallengeIds = [];
+        function pollChallenges() {
+          fetch('/api/challenges/incoming?userId=' + encodeURIComponent(userId))
+            .then(function (r) { return r.json(); })
+            .then(function (list) {
+              if (!Array.isArray(list)) return;
+              list.forEach(function (ch) {
+                if (seenChallengeIds.indexOf(ch.id) !== -1) return;
+                seenChallengeIds.push(ch.id);
+                showChallengeIncomingToast(ch);
+              });
+            })
+            .catch(function () {});
+        }
+        pollChallenges();
+        setInterval(pollChallenges, 15000);
+      }
+
+      function updateFriendsBadge(count) {
+        var badge = document.getElementById('ttt-friends-badge');
+        if (!badge) return;
+        badge.style.display = count > 0 ? 'flex' : 'none';
+        badge.textContent = count > 9 ? '9+' : count;
+      }
+
+      // ─── Friends panel ─────────────────────────────────────────────────────
+      // ─── My Profile button + card ──────────────────────────────────────────
+      function buildProfileButton(userId) {
+        if (document.getElementById('ttt-me-btn')) return;
+
+        var btn = document.createElement('button');
+        btn.id = 'ttt-me-btn';
+        btn.title = 'My Stats';
+        btn.style.cssText = 'position:fixed;bottom:176px;left:16px;width:48px;height:48px;border-radius:50%;background:#1e1e1e;border:2px solid #333;cursor:pointer;z-index:9998;overflow:hidden;padding:0;transition:border-color 0.15s;flex-shrink:0;display:flex;align-items:center;justify-content:center;';
+
+        function refreshBtnAvatar() {
+          var p = window.__tttMyProfile;
+          if (p && p.profilePicture) {
+            btn.innerHTML = '<img src="' + window.__tttSafeImageUrl(p.profilePicture) + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" />';
+          } else {
+            btn.style.fontSize = '20px';
+            btn.textContent = '👤';
+          }
+        }
+        refreshBtnAvatar();
+        document.body.appendChild(btn);
+
+        // ── Profile card modal ────────────────────────────────────────────────
+        var modal = document.createElement('div');
+        modal.id = 'ttt-me-modal';
+        modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:999995;display:none;align-items:center;justify-content:center;padding:24px;font-family:Inter,system-ui,sans-serif;';
+        document.body.appendChild(modal);
+
+        var isOpen = false;
+
+        btn.addEventListener('click', function () {
+          isOpen = !isOpen;
+          modal.style.display = isOpen ? 'flex' : 'none';
+          if (isOpen) loadMyStats(userId);
+          btn.style.borderColor = isOpen ? '#22d3ee' : '#333';
+        });
+
+        modal.addEventListener('click', function (e) {
+          if (e.target === modal) { isOpen = false; modal.style.display = 'none'; btn.style.borderColor = '#333'; }
+        });
+
+        function loadMyStats(uid) {
+          modal.innerHTML = '<div style="background:#141414;border:1px solid #222;border-radius:20px;width:100%;max-width:340px;overflow:hidden;"><p style="color:#444;text-align:center;padding:40px;font-size:0.9rem;">Loading…</p></div>';
+          fetch('/api/users')
+            .then(function (r) { return r.json(); })
+            .then(function (users) { renderCard(users, uid); })
+            .catch(function () {
+              modal.innerHTML = '<div style="background:#141414;border:1px solid #222;border-radius:20px;width:100%;max-width:340px;padding:32px;text-align:center;color:#f87171;font-size:0.9rem;">Failed to load</div>';
+            });
+        }
+
+        function renderCard(users, uid) {
+          var me = null, rank = 0;
+          for (var i = 0; i < users.length; i++) {
+            if (users[i].id === uid) { me = users[i]; rank = i + 1; break; }
+          }
+          if (!me) {
+            var cached = window.__tttMyProfile || {};
+            me = { id: uid, displayName: cached.displayName || '—', username: cached.username || '—', profilePicture: cached.profilePicture || '', wins: 0, losses: 0, draws: 0 };
+            rank = users.length + 1;
+          }
+
+          var w = me.wins || 0, l = me.losses || 0, d = me.draws || 0;
+          var total = w + l + d;
+          var rate = total > 0 ? Math.round((w / total) * 100) : 0;
+          var barColor = rate >= 70 ? '#34d399' : rate >= 40 ? '#22d3ee' : '#f87171';
+          var rankLabel = rank === 1 ? '🥇 #1' : rank === 2 ? '🥈 #2' : rank === 3 ? '🥉 #3' : '#' + rank;
+          var rankColor = rank === 1 ? '#f8d94c' : rank === 2 ? '#b0b8c8' : rank === 3 ? '#cd7f32' : '#555';
+
+          var avatarHtml = me.profilePicture
+            ? '<img src="' + window.__tttSafeImageUrl(me.profilePicture) + '" style="width:80px;height:80px;border-radius:50%;object-fit:cover;border:3px solid #222;">'
+            : '<div style="width:80px;height:80px;border-radius:50%;background:#1e1e1e;border:3px solid #222;display:flex;align-items:center;justify-content:center;font-size:32px;color:#aaa;">👤</div>';
+
+          modal.innerHTML = [
+            '<div style="background:#141414;border:1px solid #222;border-radius:20px;width:100%;max-width:340px;overflow:hidden;">',
+
+              // Header band
+              '<div style="background:linear-gradient(135deg,#0e1a1f 0%,#111 100%);padding:28px 24px 20px;text-align:center;border-bottom:1px solid #1e1e1e;position:relative;">',
+                '<button id="ttt-me-close" style="position:absolute;top:14px;right:16px;background:none;border:none;color:#444;font-size:20px;cursor:pointer;line-height:1;">✕</button>',
+                '<div style="display:flex;justify-content:center;margin-bottom:12px;">' + avatarHtml + '</div>',
+                '<div style="color:#fff;font-size:1.05rem;font-weight:700;">' + escHtmlGlobal(me.displayName) + '</div>',
+                '<div style="color:#444;font-size:0.8rem;margin-top:3px;">@' + escHtmlGlobal(me.username) + '</div>',
+                '<div style="margin-top:10px;display:inline-block;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:99px;padding:4px 14px;">',
+                  '<span style="color:' + rankColor + ';font-size:0.82rem;font-weight:700;">' + rankLabel + '</span>',
+                  '<span style="color:#333;font-size:0.78rem;"> of ' + users.length + '</span>',
+                '</div>',
+              '</div>',
+
+              // Stats grid
+              '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;text-align:center;border-bottom:1px solid #1a1a1a;">',
+                '<div style="padding:18px 8px;border-right:1px solid #1a1a1a;">',
+                  '<div style="color:#34d399;font-size:1.5rem;font-weight:700;line-height:1;">' + w + '</div>',
+                  '<div style="color:#555;font-size:0.72rem;font-weight:600;letter-spacing:0.06em;margin-top:4px;text-transform:uppercase;">Wins</div>',
+                '</div>',
+                '<div style="padding:18px 8px;border-right:1px solid #1a1a1a;">',
+                  '<div style="color:#f87171;font-size:1.5rem;font-weight:700;line-height:1;">' + l + '</div>',
+                  '<div style="color:#555;font-size:0.72rem;font-weight:600;letter-spacing:0.06em;margin-top:4px;text-transform:uppercase;">Losses</div>',
+                '</div>',
+                '<div style="padding:18px 8px;">',
+                  '<div style="color:#888;font-size:1.5rem;font-weight:700;line-height:1;">' + d + '</div>',
+                  '<div style="color:#555;font-size:0.72rem;font-weight:600;letter-spacing:0.06em;margin-top:4px;text-transform:uppercase;">Draws</div>',
+                '</div>',
+              '</div>',
+
+              // Win rate bar
+              '<div style="padding:18px 24px 24px;">',
+                '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;">',
+                  '<span style="color:#666;font-size:0.76rem;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;">Win Rate</span>',
+                  '<span style="color:' + barColor + ';font-size:1rem;font-weight:700;">' + rate + '%</span>',
+                '</div>',
+                '<div style="height:8px;background:#1e1e1e;border-radius:99px;overflow:hidden;">',
+                  '<div style="height:8px;width:' + rate + '%;background:' + barColor + ';border-radius:99px;transition:width 0.7s ease;"></div>',
+                '</div>',
+                '<div style="color:#333;font-size:0.74rem;margin-top:8px;text-align:right;">' + total + ' game' + (total !== 1 ? 's' : '') + ' played</div>',
+              '</div>',
+
+            '</div>',
+          ].join('');
+
+          document.getElementById('ttt-me-close').addEventListener('click', function () {
+            isOpen = false; modal.style.display = 'none'; btn.style.borderColor = '#333';
+          });
+        }
+      }
+
+      function buildFriendsPanel(userId) {
+        if (document.getElementById('ttt-friends-btn')) return;
+
+        // Floating button
+        var btn = document.createElement('button');
+        btn.id = 'ttt-friends-btn';
+        btn.style.cssText = 'position:fixed;bottom:64px;left:16px;width:48px;height:48px;border-radius:50%;background:#1e1e1e;border:1px solid #333;color:#aaa;font-size:20px;cursor:pointer;z-index:9998;display:flex;align-items:center;justify-content:center;transition:border-color 0.15s;';
+        btn.innerHTML = '👥<span id="ttt-friends-badge" style="display:none;position:absolute;top:-4px;right:-4px;background:#f87171;color:#fff;font-size:10px;font-weight:700;border-radius:99px;min-width:16px;height:16px;align-items:center;justify-content:center;font-family:Inter,sans-serif;">0</span>';
+        document.body.appendChild(btn);
+
+        // Panel
+        var panel = document.createElement('div');
+        panel.id = 'ttt-friends-panel';
+        panel.style.cssText = 'position:fixed;left:0;bottom:0;top:0;width:320px;max-width:90vw;background:#141414;border-right:1px solid #222;z-index:99998;transform:translateX(-100%);transition:transform 0.25s ease;display:flex;flex-direction:column;font-family:Inter,system-ui,sans-serif;';
+        panel.innerHTML = [
+          '<div style="display:flex;align-items:center;justify-content:space-between;padding:20px 18px 16px;border-bottom:1px solid #1e1e1e;">',
+            '<span style="color:#22d3ee;font-weight:700;font-size:1rem;letter-spacing:0.04em;">Players & Friends</span>',
+            '<button id="ttt-fp-close" style="background:none;border:none;color:#555;font-size:20px;cursor:pointer;padding:4px;">✕</button>',
+          '</div>',
+          '<div style="display:flex;border-bottom:1px solid #1e1e1e;">',
+            '<button id="ttt-fp-tab-all" style="flex:1;padding:10px;background:none;border:none;color:#22d3ee;font-size:0.82rem;font-weight:600;cursor:pointer;border-bottom:2px solid #22d3ee;font-family:inherit;">All Players</button>',
+            '<button id="ttt-fp-tab-friends" style="flex:1;padding:10px;background:none;border:none;color:#555;font-size:0.82rem;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;font-family:inherit;">Friends</button>',
+          '</div>',
+          '<div id="ttt-fp-body" style="flex:1;overflow-y:auto;padding:12px 0;"></div>',
+        ].join('');
+        document.body.appendChild(panel);
+
+        var isOpen = false;
+        var activeTab = 'all';
+
+        btn.addEventListener('click', function () {
+          isOpen = !isOpen;
+          panel.style.transform = isOpen ? 'translateX(0)' : 'translateX(-100%)';
+          if (isOpen) loadTab(activeTab);
+        });
+        document.getElementById('ttt-fp-close').addEventListener('click', function () {
+          isOpen = false; panel.style.transform = 'translateX(-100%)';
+        });
+
+        function setTab(tab) {
+          activeTab = tab;
+          var tabAll     = document.getElementById('ttt-fp-tab-all');
+          var tabFriends = document.getElementById('ttt-fp-tab-friends');
+          if (tab === 'all') {
+            tabAll.style.color = '#22d3ee'; tabAll.style.borderBottom = '2px solid #22d3ee';
+            tabFriends.style.color = '#555'; tabFriends.style.borderBottom = '2px solid transparent';
+          } else {
+            tabFriends.style.color = '#22d3ee'; tabFriends.style.borderBottom = '2px solid #22d3ee';
+            tabAll.style.color = '#555'; tabAll.style.borderBottom = '2px solid transparent';
+          }
+          loadTab(tab);
+        }
+
+        document.getElementById('ttt-fp-tab-all').addEventListener('click', function () { setTab('all'); });
+        document.getElementById('ttt-fp-tab-friends').addEventListener('click', function () { setTab('friends'); });
+
+        function loadTab(tab) {
+          var body = document.getElementById('ttt-fp-body');
+          body.innerHTML = '<p style="color:#444;text-align:center;padding:24px;font-size:0.85rem;">Loading…</p>';
+          if (tab === 'all') {
+            Promise.all([
+              fetch('/api/users').then(function (r) { return r.json(); }),
+              fetch('/api/friends?userId=' + encodeURIComponent(userId)).then(function (r) { return r.json(); })
+            ]).then(function (results) {
+              renderAllPlayers(results[0], results[1]);
+            }).catch(function () { body.innerHTML = '<p style="color:#f87171;text-align:center;padding:24px;font-size:0.85rem;">Failed to load</p>'; });
+          } else {
+            fetch('/api/friends?userId=' + encodeURIComponent(userId))
+              .then(function (r) { return r.json(); })
+              .then(function (d) { renderFriends(d); })
+              .catch(function () { body.innerHTML = '<p style="color:#f87171;text-align:center;padding:24px;font-size:0.85rem;">Failed to load</p>'; });
+          }
+        }
+
+        function panelStats(u) {
+          if (u.wins == null && u.losses == null) return '';
+          var w = u.wins || 0, l = u.losses || 0, d = u.draws || 0;
+          return w + 'W · ' + l + 'L' + (d > 0 ? ' · ' + d + 'D' : '');
+        }
+
+        function avatar(user, size) {
+          size = size || 36;
+          if (user.profilePicture) {
+            return '<img src="' + window.__tttSafeImageUrl(user.profilePicture) + '" style="width:' + size + 'px;height:' + size + 'px;border-radius:50%;object-fit:cover;flex-shrink:0;">';
+          }
+          var initials = (user.displayName || user.username || '?').charAt(0).toUpperCase();
+          return '<div style="width:' + size + 'px;height:' + size + 'px;border-radius:50%;background:#22d3ee22;color:#22d3ee;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:' + Math.round(size*0.45) + 'px;flex-shrink:0;">' + escHtml(initials) + '</div>';
+        }
+
+        function renderAllPlayers(users, friendData) {
+          var body = document.getElementById('ttt-fp-body');
+          var friendIds = (friendData.friends || []).map(function (f) { return f.id; });
+          var outgoing  = friendData.outgoing || [];
+          var incoming  = (friendData.incoming || []).map(function (f) { return f.id; });
+
+          var html = '';
+          users.forEach(function (u) {
+            if (u.id === userId) return;
+            var isFriend   = friendIds.indexOf(u.id) !== -1;
+            var sentReq    = outgoing.indexOf(u.id) !== -1;
+            var gotReq     = incoming.indexOf(u.id) !== -1;
+            var btnHtml;
+            if (isFriend) {
+              btnHtml = '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;"><span style="font-size:0.72rem;color:#34d399;font-weight:600;">Friends ✓</span><button data-challenge="' + escHtml(u.id) + '" data-cname="' + escHtml(u.displayName) + '" style="font-size:0.72rem;background:transparent;color:#a78bfa;border:1px solid #a78bfa;border-radius:8px;padding:3px 8px;cursor:pointer;font-weight:600;font-family:inherit;">⚔️ Challenge</button></div>';
+            } else if (sentReq) {
+              btnHtml = '<span style="font-size:0.72rem;color:#555;font-weight:500;">Sent</span>';
+            } else if (gotReq) {
+              btnHtml = '<button data-accept="' + escHtml(u.id) + '" style="font-size:0.75rem;background:#34d399;color:#000;border:none;border-radius:8px;padding:5px 10px;cursor:pointer;font-weight:600;font-family:inherit;">Accept</button>';
+            } else {
+              btnHtml = '<button data-add="' + escHtml(u.id) + '" style="font-size:0.75rem;background:transparent;color:#22d3ee;border:1px solid #22d3ee;border-radius:8px;padding:5px 10px;cursor:pointer;font-weight:600;font-family:inherit;">+ Add</button>';
+            }
+            var uStats = panelStats(u);
+            html += '<div style="display:flex;align-items:center;gap:10px;padding:10px 16px;">';
+            html += avatar(u);
+            html += '<div style="flex:1;min-width:0;">';
+            html += '<div style="color:#fff;font-size:0.88rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escHtml(u.displayName) + '</div>';
+            html += '<div style="color:#444;font-size:0.74rem;">@' + escHtml(u.username) + (uStats ? ' · ' + uStats : '') + '</div>';
+            html += '</div>' + btnHtml + '</div>';
+          });
+          if (!html) html = '<p style="color:#444;text-align:center;padding:24px;font-size:0.85rem;">No other players yet</p>';
+          body.innerHTML = html;
+
+          body.querySelectorAll('[data-add]').forEach(function (el) {
+            el.addEventListener('click', function () {
+              var toId = el.getAttribute('data-add');
+              el.textContent = '…'; el.disabled = true;
+              fetch('/api/friends/request', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({fromId: userId, toId: toId})
+              }).then(function (r) { return r.json(); })
+                .then(function () { loadTab('all'); })
+                .catch(function () { el.textContent = '+ Add'; el.disabled = false; });
+            });
+          });
+          body.querySelectorAll('[data-accept]').forEach(function (el) {
+            el.addEventListener('click', function () {
+              var fromId = el.getAttribute('data-accept');
+              el.textContent = '…'; el.disabled = true;
+              fetch('/api/friends/respond', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({userId: userId, fromId: fromId, accept: true})
+              }).then(function () { loadTab('all'); updateFriendsBadge(0); })
+                .catch(function () { el.textContent = 'Accept'; el.disabled = false; });
+            });
+          });
+          body.querySelectorAll('[data-challenge]').forEach(function (el) {
+            el.addEventListener('click', function () {
+              var toId   = el.getAttribute('data-challenge');
+              var toName = el.getAttribute('data-cname');
+              window.__tttPendingChallenge = { toId: toId, toName: toName };
+              // Close friends panel
+              var panel = document.getElementById('ttt-friends-panel');
+              if (panel) panel.style.transform = 'translateX(100%)';
+              showChallengePendingToast(toName);
+            });
+          });
+        }
+
+        function renderFriends(data) {
+          var body = document.getElementById('ttt-fp-body');
+          var html = '';
+
+          if (data.incoming && data.incoming.length > 0) {
+            html += '<p style="color:#888;font-size:0.72rem;font-weight:600;letter-spacing:0.08em;padding:8px 16px 4px;text-transform:uppercase;">Pending Requests</p>';
+            data.incoming.forEach(function (u) {
+              html += '<div style="display:flex;align-items:center;gap:10px;padding:10px 16px;">';
+              html += avatar(u);
+              html += '<div style="flex:1;min-width:0;">';
+              html += '<div style="color:#fff;font-size:0.88rem;font-weight:600;">' + escHtml(u.displayName) + '</div>';
+              var iStats = panelStats(u);
+              html += '<div style="color:#444;font-size:0.74rem;">@' + escHtml(u.username) + (iStats ? ' · ' + iStats : '') + '</div>';
+              html += '</div>';
+              html += '<div style="display:flex;gap:6px;">';
+              html += '<button data-accept="' + escHtml(u.id) + '" style="font-size:0.75rem;background:#34d399;color:#000;border:none;border-radius:8px;padding:5px 10px;cursor:pointer;font-weight:600;font-family:inherit;">Accept</button>';
+              html += '<button data-decline="' + escHtml(u.id) + '" style="font-size:0.75rem;background:transparent;color:#555;border:1px solid #333;border-radius:8px;padding:5px 10px;cursor:pointer;font-family:inherit;">✕</button>';
+              html += '</div></div>';
+            });
+          }
+
+          if (data.friends && data.friends.length > 0) {
+            html += '<p style="color:#888;font-size:0.72rem;font-weight:600;letter-spacing:0.08em;padding:8px 16px 4px;text-transform:uppercase;">Friends</p>';
+            data.friends.forEach(function (u) {
+              var fStats = panelStats(u);
+              html += '<div style="display:flex;align-items:center;gap:10px;padding:10px 16px;">';
+              html += avatar(u);
+              html += '<div style="flex:1;min-width:0;">';
+              html += '<div style="color:#fff;font-size:0.88rem;font-weight:600;">' + escHtml(u.displayName) + '</div>';
+              html += '<div style="color:#444;font-size:0.74rem;">@' + escHtml(u.username) + (fStats ? ' · ' + fStats : '') + '</div>';
+              html += '</div><button data-challenge="' + escHtml(u.id) + '" data-cname="' + escHtml(u.displayName) + '" style="font-size:0.72rem;background:transparent;color:#a78bfa;border:1px solid #a78bfa;border-radius:8px;padding:3px 8px;cursor:pointer;font-weight:600;font-family:inherit;">⚔️ Challenge</button></div>';
+            });
+          }
+
+          if (!html) html = '<p style="color:#444;text-align:center;padding:24px;font-size:0.85rem;">No friends yet — add some from All Players!</p>';
+          body.innerHTML = html;
+
+          body.querySelectorAll('[data-accept]').forEach(function (el) {
+            el.addEventListener('click', function () {
+              var fromId = el.getAttribute('data-accept');
+              el.textContent = '…'; el.disabled = true;
+              fetch('/api/friends/respond', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({userId: userId, fromId: fromId, accept: true})
+              }).then(function () { loadTab('friends'); })
+                .catch(function () { el.textContent = 'Accept'; el.disabled = false; });
+            });
+          });
+          body.querySelectorAll('[data-challenge]').forEach(function (el) {
+            el.addEventListener('click', function () {
+              var toId   = el.getAttribute('data-challenge');
+              var toName = el.getAttribute('data-cname');
+              window.__tttPendingChallenge = { toId: toId, toName: toName };
+              var panel = document.getElementById('ttt-friends-panel');
+              if (panel) panel.style.transform = 'translateX(100%)';
+              showChallengePendingToast(toName);
+            });
+          });
+          body.querySelectorAll('[data-decline]').forEach(function (el) {
+            el.addEventListener('click', function () {
+              var fromId = el.getAttribute('data-decline');
+              fetch('/api/friends/respond', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({userId: userId, fromId: fromId, accept: false})
+              }).then(function () { loadTab('friends'); }).catch(function () {});
+            });
+          });
+        }
+
+        function escHtml(s) {
+          return window.__tttEsc(s);
+        }
+      }
+
+    })();
+    </script>
+
+    <!-- Opponent profile overlay + share button + auto-join -->
+    <script>
+    (function () {
+      // Auto-join from URL — only keep ttt_join if THIS page load has a valid ?join= param
+      var p = new URLSearchParams(location.search);
+      var jc = p.get('join');
+      if (jc && /^[A-Z]{4}$/i.test(jc)) {
+        localStorage.setItem('ttt_join', jc.toUpperCase());
+      } else {
+        // No join param in URL — clear any stale code so it never blocks Create Room
+        localStorage.removeItem('ttt_join');
+      }
+
+      var shareBtn = null;
+      var opponentOverlay = null;
+      var lastPhase = '';
+      var autoJoinAttempted = false;
+      var autoJoinGiveUpAt = 0;
+
+      function setNativeValue(el, val) {
+        var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+        setter.call(el, val);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+
+      function tryAutoJoin() {
+        var code = localStorage.getItem('ttt_join');
+        if (!code) return;
+        if (autoJoinAttempted) return;
+        if (!autoJoinGiveUpAt) autoJoinGiveUpAt = Date.now() + 5000;
+        var inputs = document.querySelectorAll('input');
+        for (var i = 0; i < inputs.length; i++) {
+          var inp = inputs[i];
+          if (inp.placeholder && inp.placeholder.toLowerCase().includes('room code')) {
+            autoJoinAttempted = true;
+            localStorage.removeItem('ttt_join');
+            setNativeValue(inp, code);
+            setTimeout(function () {
+              var btns = document.querySelectorAll('button');
+              for (var b = 0; b < btns.length; b++) {
+                if (btns[b].textContent.trim() === 'Join Room') { btns[b].click(); break; }
+              }
+            }, 400);
+            break;
+          }
+        }
+        if (!autoJoinAttempted && Date.now() > autoJoinGiveUpAt) {
+          autoJoinAttempted = true;
+          localStorage.removeItem('ttt_join');
+        }
+      }
+
+      function avatar(profile, size) {
+        if (!profile) return '';
+        size = size || 40;
+        if (profile.profilePicture) {
+          return '<img src="' + window.__tttSafeImageUrl(profile.profilePicture) + '" style="width:' + size + 'px;height:' + size + 'px;border-radius:50%;object-fit:cover;border:2px solid #333;">';
+        }
+        var initial = (profile.displayName || profile.username || '?').charAt(0).toUpperCase();
+        return '<div style="width:' + size + 'px;height:' + size + 'px;border-radius:50%;background:#22d3ee22;color:#22d3ee;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:' + Math.round(size*0.45) + 'px;">' + window.__tttEsc(initial) + '</div>';
+      }
+
+      function showOpponentOverlay(myRole, profiles) {
+        removeOpponentOverlay();
+        if (!profiles) return;
+        var opponentProfile = myRole === 'X' ? profiles.o : profiles.x;
+        var myProfile = myRole === 'X' ? profiles.x : profiles.o;
+        if (!opponentProfile && !myProfile) return;
+
+        opponentOverlay = document.createElement('div');
+        opponentOverlay.id = 'ttt-opponent-overlay';
+        opponentOverlay.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9000;pointer-events:none;display:flex;justify-content:space-between;align-items:flex-start;padding:8px 12px;font-family:Inter,system-ui,sans-serif;';
+
+        function statsStr(profile) {
+          if (!profile || (profile.wins == null && profile.losses == null)) return '';
+          var w = profile.wins || 0, l = profile.losses || 0, d = profile.draws || 0;
+          return w + 'W · ' + l + 'L' + (d > 0 ? ' · ' + d + 'D' : '');
+        }
+
+        function playerCard(profile, role, isMe) {
+          if (!profile) return '<div></div>';
+          var color = role === 'X' ? '#22d3ee' : '#fb923c';
+          var stats = statsStr(profile);
+          var addBtn = '';
+          if (!isMe && profile.id) {
+            addBtn = '<button id="ttt-opp-add-btn" data-uid="' + window.__tttEsc(profile.id) + '" style="margin-top:5px;font-size:0.68rem;background:transparent;color:#22d3ee;border:1px solid #22d3ee;border-radius:7px;padding:2px 8px;cursor:pointer;font-weight:600;font-family:inherit;pointer-events:auto;">+ Add Friend</button>';
+          }
+          return '<div style="display:flex;align-items:center;gap:8px;background:rgba(20,20,20,0.9);border:1px solid #222;border-radius:12px;padding:8px 12px;pointer-events:auto;">' +
+            avatar(profile, 34) +
+            '<div>' +
+              '<div style="color:#fff;font-size:0.78rem;font-weight:600;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + window.__tttEsc(profile.displayName || profile.username) + (isMe ? ' (You)' : '') + '</div>' +
+              (stats ? '<div style="color:#666;font-size:0.64rem;margin-top:1px;">' + stats + '</div>' : '') +
+              '<div style="color:' + color + ';font-size:0.7rem;font-weight:700;margin-top:1px;">' + role + '</div>' +
+              addBtn +
+            '</div>' +
+          '</div>';
+        }
+
+        opponentOverlay.innerHTML = playerCard(myProfile, myRole, true) + playerCard(opponentProfile, myRole === 'X' ? 'O' : 'X', false);
+        document.body.appendChild(opponentOverlay);
+
+        // Wire up Add Friend button
+        var addFriendBtn = document.getElementById('ttt-opp-add-btn');
+        if (addFriendBtn) {
+          addFriendBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            var toId = addFriendBtn.getAttribute('data-uid');
+            var myId = (window.__tttMyProfile || {}).id || '';
+            if (!myId || !toId || myId === toId) return;
+            addFriendBtn.textContent = '…';
+            addFriendBtn.disabled = true;
+            fetch('/api/friends/request', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({fromId: myId, toId: toId})
+            }).then(function (r) { return r.json(); })
+              .then(function (d) {
+                if (d.status === 'accepted') {
+                  addFriendBtn.textContent = 'Friends ✓';
+                  addFriendBtn.style.color = '#34d399';
+                  addFriendBtn.style.borderColor = '#34d399';
+                } else if (d.error) {
+                  addFriendBtn.textContent = 'Sent ✓';
+                  addFriendBtn.style.color = '#888';
+                  addFriendBtn.style.borderColor = '#444';
+                } else {
+                  addFriendBtn.textContent = 'Sent ✓';
+                  addFriendBtn.style.color = '#888';
+                  addFriendBtn.style.borderColor = '#444';
+                }
+              })
+              .catch(function () {
+                addFriendBtn.textContent = '+ Add Friend';
+                addFriendBtn.disabled = false;
+              });
+          });
+        }
+      }
+
+      function removeOpponentOverlay() {
+        if (opponentOverlay) { opponentOverlay.remove(); opponentOverlay = null; }
+      }
+
+      var _obsTimer = null;
+      var observer = new MutationObserver(function () {
+        if (_obsTimer) return;
+        _obsTimer = setTimeout(function () {
+          _obsTimer = null;
+          runObserver();
+        }, 150);
+      });
+
+      function runObserver() {
+        var body = document.body.innerText || '';
+
+        // ── Waiting phase: show share button ──
+        if (body.includes('Waiting for opponent to join')) {
+          if (!shareBtn) {
+            var code = null;
+            var divs = document.querySelectorAll('div');
+            for (var i = 0; i < divs.length; i++) {
+              var t = divs[i].textContent.trim();
+              if (/^[A-Z]{4}$/.test(t) && divs[i].children.length === 0) { code = t; break; }
+            }
+            if (code) {
+              shareBtn = document.createElement('button');
+              shareBtn.id = 'ttt-share-btn';
+              shareBtn.innerHTML = 'Tictactoejoin';
+              shareBtn.style.cssText = 'position:fixed;bottom:72px;left:50%;transform:translateX(-50%);background:#34d399;color:#000;border:none;border-radius:10px;padding:12px 28px;font-size:15px;font-weight:600;cursor:pointer;z-index:99999;font-family:Inter,system-ui,sans-serif;white-space:nowrap;box-shadow:0 4px 20px rgba(52,211,153,0.3);';
+              var capturedCode = code;
+              shareBtn.onclick = function () {
+                var url = location.origin + '/?join=' + encodeURIComponent(capturedCode);
+                navigator.clipboard.writeText(url).catch(function () {
+                  var ta = document.createElement('textarea');
+                  ta.value = url; document.body.appendChild(ta); ta.select();
+                  document.execCommand('copy'); ta.remove();
+                });
+                shareBtn.innerHTML = '✓ Link copied!';
+                setTimeout(function () { shareBtn.innerHTML = 'Tictactoejoin'; }, 2000);
+              };
+              document.body.appendChild(shareBtn);
+            }
+          }
+          removeOpponentOverlay();
+        } else {
+          if (shareBtn) { shareBtn.remove(); shareBtn = null; }
+        }
+
+        // ── Playing phase: show opponent profile overlay ──
+        if (body.includes('Your Turn') || body.includes("Opponent's Turn") || body.includes('You Win') || body.includes('You Lose') || body.includes("It's a Draw")) {
+          if (!opponentOverlay && window.__tttGameProfiles) {
+            // Determine my role
+            var myRole = null;
+            if (body.includes('You are X') || body.includes('· You are X')) myRole = 'X';
+            else if (body.includes('You are O') || body.includes('· You are O')) myRole = 'O';
+            if (myRole) showOpponentOverlay(myRole, window.__tttGameProfiles);
+          }
+        } else if (!body.includes('Waiting for opponent')) {
+          removeOpponentOverlay();
+        }
+
+        // ── Lobby phase: auto-join ──
+        if (body.includes('Create a room or join with a code') && localStorage.getItem('ttt_join')) {
+          tryAutoJoin();
+        }
+      }
+
+      observer.observe(document.body, { childList: true, subtree: true });
+    })();
+    </script>
+
+    <!-- Leaderboard overlay -->
+    <script>
+    (function () {
+      var lbBuilt = false;
+
+      function buildLeaderboard() {
+        if (lbBuilt) return;
+        lbBuilt = true;
+
+        // ── Trophy button ────────────────────────────────────────────────────
+        var btn = document.createElement('button');
+        btn.id = 'ttt-lb-btn';
+        btn.title = 'Leaderboard';
+        btn.style.cssText = 'position:fixed;bottom:120px;left:16px;width:48px;height:48px;border-radius:50%;background:#1e1e1e;border:1px solid #333;color:#aaa;font-size:22px;cursor:pointer;z-index:9998;display:flex;align-items:center;justify-content:center;transition:border-color 0.15s,color 0.15s;';
+        btn.textContent = '🏆';
+        document.body.appendChild(btn);
+
+        // ── Full-screen overlay ───────────────────────────────────────────────
+        var overlay = document.createElement('div');
+        overlay.id = 'ttt-lb-overlay';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.96);z-index:999990;display:none;flex-direction:column;font-family:Inter,system-ui,sans-serif;';
+        overlay.innerHTML = [
+          '<div style="display:flex;align-items:center;justify-content:space-between;padding:22px 24px 16px;border-bottom:1px solid #1e1e1e;flex-shrink:0;">',
+            '<div style="display:flex;align-items:center;gap:10px;">',
+              '<span style="font-size:1.4rem;">🏆</span>',
+              '<span style="color:#f8d94c;font-size:1.1rem;font-weight:700;letter-spacing:0.06em;">Leaderboard</span>',
+            '</div>',
+            '<button id="ttt-lb-close" style="background:none;border:none;color:#555;font-size:22px;cursor:pointer;padding:4px 8px;line-height:1;">✕</button>',
+          '</div>',
+          '<div id="ttt-lb-body" style="flex:1;overflow-y:auto;padding:16px 0 32px;max-width:560px;width:100%;margin:0 auto;"></div>',
+        ].join('');
+        document.body.appendChild(overlay);
+
+        var isOpen = false;
+
+        btn.addEventListener('click', function () {
+          isOpen = !isOpen;
+          overlay.style.display = isOpen ? 'flex' : 'none';
+          if (isOpen) loadLeaderboard();
+          btn.style.color = isOpen ? '#f8d94c' : '#aaa';
+          btn.style.borderColor = isOpen ? '#4a4020' : '#333';
+        });
+
+        document.getElementById('ttt-lb-close').addEventListener('click', function () {
+          isOpen = false;
+          overlay.style.display = 'none';
+          btn.style.color = '#aaa';
+          btn.style.borderColor = '#333';
+        });
+      }
+
+      function loadLeaderboard() {
+        var body = document.getElementById('ttt-lb-body');
+        if (!body) return;
+        body.innerHTML = '<p style="color:#444;text-align:center;padding:48px 24px;font-size:0.9rem;">Loading…</p>';
+        fetch('/api/users')
+          .then(function (r) { return r.json(); })
+          .then(function (users) { renderLeaderboard(users, body); })
+          .catch(function () {
+            body.innerHTML = '<p style="color:#f87171;text-align:center;padding:48px 24px;font-size:0.9rem;">Failed to load — try again</p>';
+          });
+      }
+
+      function renderLeaderboard(users, body) {
+        var medals = ['🥇', '🥈', '🥉'];
+        var rankColors = ['#f8d94c', '#b0b8c8', '#cd7f32'];
+
+        if (!users || users.length === 0) {
+          body.innerHTML = '<p style="color:#444;text-align:center;padding:48px 24px;font-size:0.9rem;">No players yet — be the first to sign in and play!</p>';
+          return;
+        }
+
+        var html = '';
+
+        users.forEach(function (u, i) {
+          var w = u.wins   || 0;
+          var l = u.losses || 0;
+          var d = u.draws  || 0;
+          var total = w + l + d;
+          var rate = total > 0 ? Math.round((w / total) * 100) : 0;
+          var rankNum = i + 1;
+          var isMedal = rankNum <= 3;
+          var rowBg = isMedal
+            ? (rankNum === 1 ? 'rgba(248,217,76,0.06)' : rankNum === 2 ? 'rgba(176,184,200,0.05)' : 'rgba(205,127,50,0.05)')
+            : 'transparent';
+          var rowBorder = isMedal
+            ? (rankNum === 1 ? 'border-left:3px solid #f8d94c' : rankNum === 2 ? 'border-left:3px solid #b0b8c8' : 'border-left:3px solid #cd7f32')
+            : 'border-left:3px solid transparent';
+
+          // Avatar
+          var avatarHtml = u.profilePicture
+            ? '<img src="' + window.__tttSafeImageUrl(u.profilePicture) + '" style="width:44px;height:44px;border-radius:50%;object-fit:cover;flex-shrink:0;">'
+            : '<div style="width:44px;height:44px;border-radius:50%;background:#1e1e1e;color:#aaa;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px;flex-shrink:0;border:1px solid #2a2a2a;">' + window.__tttEsc((u.displayName || u.username || '?').charAt(0).toUpperCase()) + '</div>';
+
+          // Rank badge
+          var rankHtml = isMedal
+            ? '<span style="font-size:1.3rem;flex-shrink:0;width:28px;text-align:center;">' + medals[rankNum - 1] + '</span>'
+            : '<span style="font-size:0.8rem;font-weight:700;color:#333;width:28px;text-align:center;flex-shrink:0;">#' + rankNum + '</span>';
+
+          // Win rate bar
+          var barColor = rate >= 70 ? '#34d399' : rate >= 40 ? '#22d3ee' : '#f87171';
+
+          html += [
+            '<div style="display:flex;align-items:center;gap:12px;padding:14px 20px;background:' + rowBg + ';' + rowBorder + ';margin-bottom:2px;">',
+              rankHtml,
+              avatarHtml,
+              '<div style="flex:1;min-width:0;">',
+                '<div style="display:flex;align-items:baseline;gap:8px;">',
+                  '<span style="color:#fff;font-size:0.9rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escH(u.displayName) + '</span>',
+                  (isMedal ? '<span style="color:' + rankColors[rankNum-1] + ';font-size:0.68rem;font-weight:700;">' + (rankNum === 1 ? '⭐ TOP' : '') + '</span>' : ''),
+                '</div>',
+                '<div style="color:#444;font-size:0.74rem;margin-top:1px;">@' + escH(u.username) + '</div>',
+                '<div style="margin-top:6px;display:flex;align-items:center;gap:8px;">',
+                  '<div style="height:4px;flex:1;background:#1e1e1e;border-radius:99px;overflow:hidden;">',
+                    '<div style="height:4px;width:' + rate + '%;background:' + barColor + ';border-radius:99px;transition:width 0.6s ease;"></div>',
+                  '</div>',
+                  '<span style="color:' + barColor + ';font-size:0.7rem;font-weight:700;flex-shrink:0;">' + rate + '%</span>',
+                '</div>',
+              '</div>',
+              '<div style="text-align:right;flex-shrink:0;min-width:72px;">',
+                '<div style="font-size:0.82rem;font-weight:700;">',
+                  '<span style="color:#34d399;">' + w + 'W</span>',
+                  '<span style="color:#444;margin:0 3px;">·</span>',
+                  '<span style="color:#f87171;">' + l + 'L</span>',
+                  (d > 0 ? '<span style="color:#444;margin:0 3px;">·</span><span style="color:#888;">' + d + 'D</span>' : ''),
+                '</div>',
+                '<div style="color:#333;font-size:0.7rem;margin-top:2px;">' + total + ' game' + (total !== 1 ? 's' : '') + '</div>',
+              '</div>',
+            '</div>',
+          ].join('');
+        });
+
+        body.innerHTML = html;
+      }
+
+      function escH(s) {
+        return window.__tttEsc(s);
+      }
+
+      // Build as soon as DOM is ready
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', buildLeaderboard);
+      } else {
+        buildLeaderboard();
+      }
+    })();
+    </script>
+  </body>
+</html>

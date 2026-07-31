@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tic Tac Toe — Guest Mode</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+body{
+font-family:Arial,sans-serif;
+background:#111;
+color:#fff;
+display:flex;
+justify-content:center;
+align-items:center;
+min-height:100vh;
+margin:0;
+}
+.container{
+max-width:420px;
+width:100%;
+padding:20px;
+text-align:center;
+}
+.card{
+background:#1a1a1a;
+border:1px solid #2a2a2a;
+border-radius:16px;
+padding:20px;
+}
+h1{color:#22d3ee;}
+button{
+padding:12px 20px;
+border:none;
+border-radius:10px;
+cursor:pointer;
+font-size:16px;
+}
+.primary{
+background:#22d3ee;
+color:#111;
+}
+.board{
+display:grid;
+grid-template-columns:repeat(3,1fr);
+gap:8px;
+margin:20px 0;
+}
+.cell{
+aspect-ratio:1;
+font-size:40px;
+background:#262626;
+border:1px solid #333;
+color:white;
+}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="card">
+<h1>Guest Mode</h1>
+<p>sign in to play with your friends with online multiplayer</p>
+<div id="status">Player X's turn</div>
+<div class="board" id="board"></div>
+<button type="button" class="primary" onclick="resetGame()">New Game</button>
+</div>
+</div>
+
+<script>
+const board=document.getElementById('board');
+const statusText=document.getElementById('status');
+let current='X';
+let cells=Array(9).fill('');
+let gameOver=false;
+
+for(let i=0;i<9;i++){
+ const b=document.createElement('button');
+ b.className='cell';
+ b.onclick=()=>move(i,b);
+ board.appendChild(b);
+}
+
+function move(i,btn){
+ if(gameOver||cells[i]) return;
+ cells[i]=current;
+ btn.textContent=current;
+
+ const wins=[[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+ for(const w of wins){
+   if(w.every(x=>cells[x]===current)){
+      statusText.textContent='Player '+current+' wins!';
+      gameOver=true;
+      return;
+   }
+ }
+ if(cells.every(Boolean)){
+   statusText.textContent='Draw!';
+   gameOver=true;
+   return;
+ }
+ current=current==='X'?'O':'X';
+ statusText.textContent='Player '+current+"'s turn";
+}
+
+function resetGame(){
+ current='X';
+ cells=Array(9).fill('');
+ gameOver=false;
+ statusText.textContent="Player X's turn";
+ document.querySelectorAll('.cell').forEach(c=>c.textContent='');
+}
+</script>
+</body>
+</html>

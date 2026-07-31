@@ -1,0 +1,2 @@
+tornado>=6.5,<7
+PyJWT[crypto]>=2.10,<3

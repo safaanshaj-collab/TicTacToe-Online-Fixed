@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: TicTacToe Neon
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python server.py
+    healthCheckPath: /
+    envVars:
+      - key: CLERK_ISSUER
+        value: https://busy-skylark-3.clerk.accounts.dev
