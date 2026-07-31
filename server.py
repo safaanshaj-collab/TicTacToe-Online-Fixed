@@ -617,6 +617,26 @@ class UserListHandler(AuthenticatedJsonHandler):
         self.write(json.dumps(users))
 
 
+class PublicLeaderboardHandler(JsonHandler):
+    def get(self):
+        conn = sqlite3.connect(DB_PATH)
+        rows = conn.execute(
+            'SELECT username, display_name, wins, losses, draws FROM users ORDER BY wins DESC, created_at DESC'
+        ).fetchall()
+        conn.close()
+        users = [
+            {
+                'username': r[0],
+                'displayName': r[1],
+                'wins': r[2],
+                'losses': r[3],
+                'draws': r[4],
+            }
+            for r in rows
+        ]
+        self.write(json.dumps(users))
+
+
 class FriendRequestHandler(AuthenticatedJsonHandler):
     def set_default_headers(self):
         self.set_header('Content-Type', 'application/json')
@@ -921,6 +941,7 @@ def make_app():
         (r'/api/user/check-username', UserCheckUsernameHandler),
         (r'/api/user/register', UserRegisterHandler),
         (r'/api/users', UserListHandler),
+        (r'/api/leaderboard', PublicLeaderboardHandler),
         (r'/api/friends', FriendListHandler),
         (r'/api/friends/request', FriendRequestHandler),
         (r'/api/friends/respond', FriendRespondHandler),
