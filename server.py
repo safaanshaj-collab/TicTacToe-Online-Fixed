@@ -5,6 +5,7 @@ import jwt
 import os
 import json
 import random
+import secrets
 import string
 import time
 import asyncio
@@ -181,6 +182,7 @@ def init_db():
 init_db()
 
 rooms = {}
+ws_tickets = {}
 
 
 def make_code():
@@ -320,11 +322,24 @@ class GameWebSocketHandler(tornado.websocket.WebSocketHandler):
     def open(self):
         self.room_code = None
         self.role = None
-        self.user_id = verify_request_user(self)
+        ticket = self.get_argument('ticket', '')
+        ticket_data = ws_tickets.pop(ticket, None) if ticket else None
+        if ticket_data and ticket_data[1] >= time.time():
+            self.user_id = ticket_data[0]
+        else:
+            self.user_id = verify_request_user(self)
         if not self.user_id:
             self.close(code=4401, reason='Authentication required')
             return
-        self.profile = get_profile(self.user_id)
+        self.profile = get_profile(self.user_id) or {
+            'id': self.user_id,
+            'username': 'player',
+            'displayName': 'Player',
+            'profilePicture': '',
+            'wins': 0,
+            'losses': 0,
+            'draws': 0,
+        }
 
     def on_message(self, message):
         try:
@@ -536,6 +551,17 @@ class UserStatusHandler(AuthenticatedJsonHandler):
             self.write(json.dumps({'hasProfile': True, 'username': row[0], 'displayName': row[1], 'profilePicture': row[2]}))
         else:
             self.write(json.dumps({'hasProfile': False}))
+
+
+class WebSocketTicketHandler(AuthenticatedJsonHandler):
+    def post(self):
+        now = time.time()
+        for ticket, (_, expires_at) in list(ws_tickets.items()):
+            if expires_at < now:
+                ws_tickets.pop(ticket, None)
+        ticket = secrets.token_urlsafe(32)
+        ws_tickets[ticket] = (self.user_id, now + 30)
+        self.write(json.dumps({'ticket': ticket}))
 
 
 class UserCheckUsernameHandler(AuthenticatedJsonHandler):
@@ -937,6 +963,7 @@ def make_app():
         (r'/sign-in(?:/.*)?', ReactAppHandler),
         (r'/sign-up(?:/.*)?', ReactAppHandler),
         (r'/api/ws', GameWebSocketHandler),
+        (r'/api/ws-ticket', WebSocketTicketHandler),
         (r'/api/user/status', UserStatusHandler),
         (r'/api/user/check-username', UserCheckUsernameHandler),
         (r'/api/user/register', UserRegisterHandler),
