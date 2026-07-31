@@ -1292,7 +1292,11 @@
 
           (async function () {
             try {
-              var session = window.Clerk && window.Clerk.session;
+              // The bundled React app exposes its Clerk instance after the
+              // provider mounts. Clerk is module-scoped, so window.Clerk is
+              // not available on production builds.
+              var clerk = window.__tttClerk || window.Clerk;
+              var session = clerk && clerk.session;
               if (!session) throw new Error('Sign in required');
               var token = await session.getToken();
               if (!token) throw new Error('Sign in required');
